@@ -1,0 +1,383 @@
+---
+title: "COVID 19 - Measuring the impact of governments' decisions to flatten the curve"
+author: "Juan Ignacio de Oyarbide & Jean Baptiste Astruz"
+date: "09/04/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+Packages=c("rstanarm","actuar","rstan","dplyr","lubridate","readxl","ggplot2",
+           "dplyr","brm","brms","bayesplot","tidyverse","shinystan","gganimate",
+           "gifski","png","lazyeval","formattable","scales","DT","tidybayes",
+           "ggrepel","ggstance","ggridges","purrr","forcats","shiny","shinythemes",
+           "MASS","EnvStats","hrbrthemes","reshape2","psych","lattice","grid","ggthemes"
+)
+
+lapply(Packages,library,character.only=TRUE)
+
+options(shiny.maxRequestSize=40*1024^2) 
+
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+Sys.setenv(LOCAL_CPPFLAGS = '-march=corei7')
+```
+
+## Introduction
+
+Governments have been taking strict measures to slowdown the COVID-19 pandemic or to "flatten the curve". The main reason is funded on avoiding a shortfall of health care resources while buying time to learn about the disease. In the other hand, current lockdowns are provoking collateral problems, especially in fragile economies, and rising questions about the actual sustainability of the system. In order to make a strategic and progressive reactivation, it is critical to have accurate estimates of the virus growth given the measures taken today.
+In this article, we propose a probabilistic framework to predict the number of confirmed cases, considered as a proxy of the growth intensity of the virus. We include variables that might have a relevant effect on the spread such as the number of days between the lockdown date and the first case arrival, capability of testing and population density. The model structure is based on three parameters: outbreak delay, growth rate and reaching point. Furthermore, the proposed probabilistic framework provides a mathematical architecture to partially-pool national estimates towards the overall common behavior of the pandemic (“borrowing strength” property). It is noteworthy that, given the different dates of arrival of the virus to national territories and the similarities in group of countries, it is possible to measure the impact of public policies in the expected curve of confirmed cases. 
+
+The question is, when will we start witnessing the results of the measures taken today? or, how good are these decisions in order to fight the spread?
+The goal of the proposed model is to provide a probabilistic framework for confirmed cases predictions, based not only in what we experienced until now but also taking into account relevant indicators. The model pivots on parameters of interests such as outbreak delay, explosion rate and reaching point. The methodology relies on Bayesian inference, which provides a mathematical architecture to partially-pool national estimates towards the overall common behavior of the pandemic (“borrowing strength” property). It is noteworthy that, given the different dates of arrival of the virus to national territories and the similarities in group of countries, it is possible to measure the impact of public policies in the expected curve of confirmed cases. 
+
+## Data Visualization
+
+```{r observation plots, echo=FALSE}
+
+confirmedcases_counts <- read.csv("https://data.humdata.org/hxlproxy/data/download/time_series_covid19_confirmed_global_narrow.csv?dest=data_edit&filter01=merge&merge-url01=https%3A%2F%2Fdocs.google.com%2Fspreadsheets%2Fd%2Fe%2F2PACX-1vTglKQRXpkKSErDiWG6ycqEth32MY0reMuVGhaslImLjfuLU0EUgyyu2e-3vKDArjqGX7dXEBV8FJ4f%2Fpub%3Fgid%3D1326629740%26single%3Dtrue%26output%3Dcsv&merge-keys01=%23country%2Bname&merge-tags01=%23country%2Bcode%2C%23region%2Bmain%2Bcode%2C%23region%2Bsub%2Bcode%2C%23region%2Bintermediate%2Bcode&filter02=merge&merge-url02=https%3A%2F%2Fdocs.google.com%2Fspreadsheets%2Fd%2Fe%2F2PACX-1vTglKQRXpkKSErDiWG6ycqEth32MY0reMuVGhaslImLjfuLU0EUgyyu2e-3vKDArjqGX7dXEBV8FJ4f%2Fpub%3Fgid%3D398158223%26single%3Dtrue%26output%3Dcsv&merge-keys02=%23adm1%2Bname&merge-tags02=%23country%2Bcode%2C%23region%2Bmain%2Bcode%2C%23region%2Bsub%2Bcode%2C%23region%2Bintermediate%2Bcode&merge-replace02=on&merge-overwrite02=on&filter03=explode&explode-header-att03=date&explode-value-att03=value&filter04=rename&rename-oldtag04=%23affected%2Bdate&rename-newtag04=%23date&rename-header04=Date&filter05=rename&rename-oldtag05=%23affected%2Bvalue&rename-newtag05=%23affected%2Binfected%2Bvalue%2Bnum&rename-header05=Value&filter06=clean&clean-date-tags06=%23date&filter07=sort&sort-tags07=%23date&sort-reverse07=on&filter08=sort&sort-tags08=%23country%2Bname%2C%23adm1%2Bname&tagger-match-all=on&tagger-default-tag=%23affected%2Blabel&tagger-01-header=province%2Fstate&tagger-01-tag=%23adm1%2Bname&tagger-02-header=country%2Fregion&tagger-02-tag=%23country%2Bname&tagger-03-header=lat&tagger-03-tag=%23geo%2Blat&tagger-04-header=long&tagger-04-tag=%23geo%2Blon&header-row=1&url=https%3A%2F%2Fraw.githubusercontent.com%2FCSSEGISandData%2FCOVID-19%2Fmaster%2Fcsse_covid_19_data%2Fcsse_covid_19_time_series%2Ftime_series_covid19_confirmed_global.csv")[-1,]
+
+confirmedcases_counts$cumcases <- as.numeric(levels(confirmedcases_counts$Value)[confirmedcases_counts$Value])
+
+death_counts <- read.csv("https://data.humdata.org/hxlproxy/data/download/time_series_covid19_deaths_global_narrow.csv?dest=data_edit&filter01=merge&merge-url01=https%3A%2F%2Fdocs.google.com%2Fspreadsheets%2Fd%2Fe%2F2PACX-1vTglKQRXpkKSErDiWG6ycqEth32MY0reMuVGhaslImLjfuLU0EUgyyu2e-3vKDArjqGX7dXEBV8FJ4f%2Fpub%3Fgid%3D1326629740%26single%3Dtrue%26output%3Dcsv&merge-keys01=%23country%2Bname&merge-tags01=%23country%2Bcode%2C%23region%2Bmain%2Bcode%2C%23region%2Bsub%2Bcode%2C%23region%2Bintermediate%2Bcode&filter02=merge&merge-url02=https%3A%2F%2Fdocs.google.com%2Fspreadsheets%2Fd%2Fe%2F2PACX-1vTglKQRXpkKSErDiWG6ycqEth32MY0reMuVGhaslImLjfuLU0EUgyyu2e-3vKDArjqGX7dXEBV8FJ4f%2Fpub%3Fgid%3D398158223%26single%3Dtrue%26output%3Dcsv&merge-keys02=%23adm1%2Bname&merge-tags02=%23country%2Bcode%2C%23region%2Bmain%2Bcode%2C%23region%2Bsub%2Bcode%2C%23region%2Bintermediate%2Bcode&merge-replace02=on&merge-overwrite02=on&filter03=explode&explode-header-att03=date&explode-value-att03=value&filter04=rename&rename-oldtag04=%23affected%2Bdate&rename-newtag04=%23date&rename-header04=Date&filter05=rename&rename-oldtag05=%23affected%2Bvalue&rename-newtag05=%23affected%2Binfected%2Bvalue%2Bnum&rename-header05=Value&filter06=clean&clean-date-tags06=%23date&filter07=sort&sort-tags07=%23date&sort-reverse07=on&filter08=sort&sort-tags08=%23country%2Bname%2C%23adm1%2Bname&tagger-match-all=on&tagger-default-tag=%23affected%2Blabel&tagger-01-header=province%2Fstate&tagger-01-tag=%23adm1%2Bname&tagger-02-header=country%2Fregion&tagger-02-tag=%23country%2Bname&tagger-03-header=lat&tagger-03-tag=%23geo%2Blat&tagger-04-header=long&tagger-04-tag=%23geo%2Blon&header-row=1&url=https%3A%2F%2Fraw.githubusercontent.com%2FCSSEGISandData%2FCOVID-19%2Fmaster%2Fcsse_covid_19_data%2Fcsse_covid_19_time_series%2Ftime_series_covid19_deaths_global.csv")[-1,]
+
+countryinfo <- read_csv("countryinfo.csv")
+
+confirmedcases_counts$Country.Region <- as.character(confirmedcases_counts$Country.Region)
+death_counts$Country.Region <- as.character(death_counts$Country.Region)
+
+confirmedcases_counts[confirmedcases_counts$Country.Region=="Korea, South",c("Country.Region")] <- "South Korea"
+death_counts[death_counts$Country.Region=="Korea, South",c("Country.Region")] <- "South Korea"
+
+confirmedcases_counts$day <- as.numeric(as.Date(confirmedcases_counts$Date))-min(as.numeric(as.Date(confirmedcases_counts$Date)))+1
+death_counts$day <- as.numeric(as.Date(death_counts$Date))-min(as.numeric(as.Date(death_counts$Date)))+1
+
+###########
+
+#Table and plot here
+
+#########
+
+
+```
+
+```{r data prep, include=FALSE}
+
+tmp <- left_join(confirmedcases_counts %>% 
+  group_by(Country.Region,Date) %>% 
+  filter(Value!=0) %>% 
+  group_by(Country.Region) %>% 
+  summarize(firstDate=min(date(Date)),
+            firstDay=min(day)),
+  countryinfo)
+
+tmp$lockdown <- as.Date(max(date(confirmedcases_counts$Date)))
+
+tmp[tmp$Country.Region=="Italy",c("lockdown")] <- as.Date("2020/03/09")
+tmp[tmp$Country.Region=="Spain",c("lockdown")] <- as.Date("2020/03/14")
+tmp[tmp$Country.Region=="France",c("lockdown")] <- as.Date("2020/03/17")
+tmp[tmp$Country.Region=="Germany",c("lockdown")] <- as.Date("2020/03/22")
+tmp[tmp$Country.Region=="United Kingdom",c("lockdown")] <- as.Date("2020/03/23")
+tmp[tmp$Country.Region=="Austria",c("lockdown")] <- as.Date("2020/03/16")
+tmp[tmp$Country.Region=="Belgium",c("lockdown")] <- as.Date("2020/03/18")
+tmp[tmp$Country.Region=="Portugal",c("lockdown")] <- as.Date("2020/03/19")
+tmp[tmp$Country.Region=="China",c("lockdown")] <-as.Date("2020/01/23")
+tmp[tmp$Country.Region=="US",c("lockdown")] <- as.Date("2020/03/22")
+tmp[tmp$Country.Region=="India",c("lockdown")] <- as.Date("2020/03/24")
+tmp[tmp$Country.Region=="Argentina",c("lockdown")] <- as.Date("2020/03/20")
+tmp[tmp$Country.Region=="Luxembourg",c("lockdown")] <- as.Date("2020/03/19")
+tmp[tmp$Country.Region=="Canada",c("lockdown")] <- as.Date("2020/03/19")
+tmp[tmp$Country.Region=="Mexico",c("lockdown")] <- as.Date("2020/03/31")
+tmp[tmp$Country.Region=="Chile",c("lockdown")] <- as.Date("2020/03/23")
+tmp[tmp$Country.Region=="Uruguay",c("lockdown")] <- as.Date("2020/03/22")
+tmp[tmp$Country.Region=="Brazil",c("lockdown")] <- as.Date("2020/03/23")
+tmp[tmp$Country.Region=="Russia",c("lockdown")] <- as.Date("2020/03/10")
+tmp[tmp$Country.Region=="Taiwan*",c("lockdown")] <- as.Date("2020/03/3")
+tmp[tmp$Country.Region=="Vietnam",c("lockdown")] <- as.Date("2020/03/5")
+
+tmp$lockdown_delay <- as.numeric(tmp$lockdown)-as.numeric(tmp$firstDate)
+
+db_level_1 <- confirmedcases_counts %>% 
+  group_by(Country.Region,day) %>% 
+  summarize(cumcases= sum(cumcases)) %>%  
+  filter(Country.Region %in% c("China","US","Canada","Mexico","Chile","Uruguay","Brazil","Argentina","Russia",
+                               "France","Italy","Spain","Belgium","Germany","Luxembourg","Austria","United Kingdom","Portugal",
+                               "India","South Korea","Taiwan*"))
+
+db_level_1$Country.Region <- as.factor(db_level_1$Country.Region)
+db_level_1$Country.Region <- relevel(db_level_1$Country.Region,"China")
+
+
+tmp_2 <- countryinfo %>% 
+  filter(Country.Region %in% c("China","US","Canada","Mexico","Chile","Uruguay","Brazil","Argentina","Russia",
+                               "France","Italy","Spain","Belgium","Germany","Luxembourg","Austria","United Kingdom","Portugal",
+                               "India","South Korea","Taiwan*"))
+
+ordered_names <- data.frame(expand.grid(levels(tmpdb_1$Country.Region)))
+colnames(ordered_names) <- "Country.Region"
+
+db_level_2 <- left_join(ordered_names,tmp_2)
+
+db_level_2 <- left_join(db_level_2,tmp[,c(1,21)])
+
+####
+
+
+
+#Show this information as well (country_info)
+
+
+
+###
+```
+
+
+
+```{r, include=FALSE}
+
+ndaysproj=10
+
+yproj <- expand.grid(Country.Region=levels(db_level_1$Country.Region),
+                    day=max(db_level_1$day+1):(max(db_level_1$day+1)+ndaysproj))
+
+design_matrix_1 <- model.matrix(~-1+Country.Region,db_level_1);colnames(design_matrix_1);dim(design_matrix_1)
+
+design_matrix_b <- model.matrix(~-1+Country.Region,db_level_1)[,-1];colnames(design_matrix_b);dim(design_matrix_b)
+
+design_matrix_level_2 <- model.matrix(~ -1 + as.numeric(lockdown_delay)+
+                                        as.numeric(TestsOver1mPop)+
+                                        as.numeric(Density)+
+                                        Group+
+                                        as.numeric(Urbanpop),
+                                db_level_2);colnames(design_matrix_level_2);dim(design_matrix_level_2)
+
+design_matrix_proj <- model.matrix(~-1+Country.Region,yproj);colnames(design_matrix_proj);dim(design_matrix_proj)
+
+design_matrix_b_proj <- model.matrix(~-1+Country.Region,yproj)[,-1];colnames(design_matrix_b_proj);dim(design_matrix_b_proj)
+
+db_level_1$cumcases <- db_level_1$cumcases+1
+  
+stan_list <- list("y"=db_level_1$cumcases,
+          "N"=length(db_level_1$cumcases),
+          "K"=dim(design_matrix_1)[2],
+          "K_a"=dim(design_matrix_1)[2],
+          "K_c"=dim(design_matrix_level_2)[2],
+          "design_matrix_1"=design_matrix_1,
+          "design_matrix_b"=design_matrix_b,
+          "design_matrix_level_2"=design_matrix_level_2,
+          "design_matrix_proj"=design_matrix_proj,
+          "design_matrix_b_proj"=design_matrix_b_proj,
+          "M"=length(yproj$Country.Region),
+          "day"=db_level_1$day,
+          "day_projected"=yproj$day)
+```
+
+## Model specification
+
+
+$$
+y_{jt} \sim Lognormal(\mu_{jt},\sigma_{jt})\\
+
+\mu_{jt}=a_j \text{ } exp ({-b_j \text{ } exp({-c_j\text{ } \times\text{ } t}}))\\
+
+\sigma_{jt} \sim studentT (5,0,1.5)\\
+
+a_j \sim Normal^+(a_{intercept},\sigma_a)\\
+
+b_j \sim Normal(b_{intercept},\sigma_b)\\
+
+c_j \sim Normal(c_{intercept}+ \beta_{lockdown} \times \sigma_{lockdown}+\beta_{density} \times \sigma_{density} + \beta_{tests} \times \sigma_{tests} + \beta_{Density:tests} \times \sigma_{Density:tests},\sigma_c)\\
+
+a_{intercept} \sim Normal(11.5,3)\\
+
+b_{intercept} \sim Normal^+(5,10)\\
+
+c_{intercept} \sim Normal^+(0.1,0.5)\\
+
+\sigma_a \sim Cauchy^+(0,10)\\
+
+\sigma_b \sim Cauchy^+(0,25)\\
+
+\sigma_c \sim Cauchy^+(0,1)\\
+
+\beta_{lockdown}\sim Normal(0,\sigma_{lockdown})\\
+
+\beta_{density}\sim Normal(0,\sigma_{density})\\
+
+\beta_{tests}\sim Normal(0,\sigma_{tests})\\
+
+\beta_{Density:tests}\sim Normal(0,\sigma_{Density:tests})\\
+
+\sigma_{lockdown}\sim Cauchy^+(0,10)\\
+
+\sigma_{density}\sim Cauchy^+(0,30)\\
+
+\sigma_{tests}\sim Cauchy^+(0,20)\\
+
+\sigma_{Density:tests})\sim Cauchy^+(0,50)\\
+
+$$
+
+
+#########
+
+```{r}
+sm <- "data {
+  int<lower=0> N;
+  int<lower=0> M;
+  int<lower=0> K_a;
+  int<lower=0> K_c;
+  vector[N] y;
+  vector[N] day;
+  vector[M] day_projected;
+  int<lower=0> K; //population effects
+  matrix[N,K] design_matrix_1;
+  matrix[N,K-1] design_matrix_b;
+  matrix[K,K_c] design_matrix_level_2;
+  matrix[M,K] design_matrix_proj;
+  matrix[M,K-1] design_matrix_b_proj;
+}
+parameters {
+  vector[K] a;
+  real<lower=0> a_intercept;
+  real<lower=0> sigma_a;
+  
+  vector<lower=0>[K-1] b;
+  real<lower=0> b_intercept;
+  real<lower=0> sigma_b;
+  
+  vector<lower=0>[K] c;
+  real<lower=0> c_intercept;
+  real<lower=0> sigma_c;
+  
+  // vector<lower=0>[K_a] a_2;
+  // real<lower=0> a_intercept;
+  // real<lower=0> sigma_a;
+  
+  vector[K_c] c_2;
+  
+  real<lower=0> sigma_lockdown;
+  real<lower=0> sigma_tests;
+  real<lower=0> sigma_density;
+  real<lower=0> sigma_group;                                 
+  real<lower=0> sigma_Urbanpop;
+  
+  real<lower=0> sigma;
+}
+transformed parameters{
+  vector[N] a_index=  design_matrix_1 * a;
+  vector[N] b_index = b_intercept + design_matrix_b * b * sigma_b;
+  vector[N] c_index = design_matrix_1 * c;
+
+  vector[N] mu= a_index .* exp(- b_index .* exp(-c_index .* day));
+
+  vector[M] a_index_proj= exp(design_matrix_proj * a);
+  vector[M] b_index_proj= b_intercept + design_matrix_b_proj * b * sigma_b;
+  vector[M] c_index_proj= design_matrix_proj * c;
+  
+  vector[M] mu_proj= a_index_proj .* exp(-b_index_proj .* exp(-c_index_proj .* day_projected));
+}
+model {
+//priors
+
+target+= normal_lpdf(a|a_intercept,sigma_a);
+target+= normal_lpdf(a_intercept|10,3);  //+ design_matrix_a * a_2
+target+= cauchy_lpdf(sigma_a|0,10);
+
+target+= normal_lpdf(b|0,1);
+target+= normal_lpdf(b_intercept|5,10);
+target+= cauchy_lpdf(sigma_b|0,25);
+
+target+= normal_lpdf(c|c_intercept + design_matrix_level_2 * c_2 ,sigma_c); 
+target+= normal_lpdf(c_intercept|0.1,0.5);
+target+= cauchy_lpdf(sigma_c|0,1);
+
+target+= normal_lpdf(c_2[1]*sigma_lockdown|0,1);
+target+= normal_lpdf(c_2[2]*sigma_tests|0,1);
+target+= normal_lpdf(c_2[3]*sigma_density|0,1);
+target+= normal_lpdf(c_2[4]*sigma_group|0,1);
+target+= normal_lpdf(c_2[5]*sigma_Urbanpop|0,1);
+
+target+= cauchy_lpdf(sigma_lockdown|0,1);
+target+= cauchy_lpdf(sigma_tests|0,1);
+target+= cauchy_lpdf(sigma_density|0,1);
+target+= cauchy_lpdf(sigma_group|0,1);
+target+= cauchy_lpdf(sigma_Urbanpop|0,1);
+
+
+target+= student_t_lpdf(sigma|5,0,1.5);
+
+target+= lognormal_lpdf(y|mu,sigma);
+}
+generated quantities{
+ real yrep[N]= lognormal_rng(mu,sigma);
+ real yproj[M]= lognormal_rng(mu_proj,sigma);
+}
+"
+sm1 = stan_model(model_code = sm)
+rm(sm)
+
+niter=1500
+nchains=3
+
+stan_fit = sampling(sm1,data = stan_list,chains = nchains,iter=niter,control = list(adapt_delta=0.9, max_treedepth=10))
+```
+
+######
+
+## Model assessment
+
+
+```{r pressure, echo=FALSE}
+
+traceplot(stan_fit,pars=c("a_intercept"))
+
+
+post <- rstan::extract(stan_fit,pars = c("yrep","yproj"),
+                       inc_warmup=FALSE)
+
+ppc_summary_yrep <- data.frame(cbind(
+  median=apply(post$yrep, 2, median),
+  t(apply(post$yrep, 2, quantile, probs=c(0.025, 0.975)))
+))
+
+colnames(ppc_summary_yrep) = 
+  c("Y_pred_median","Y_pred_cred_0.025","Y_pred_cred_0.975")
+
+ppc_summary_yrep$model <- "yrep"
+
+ppc_summary_yproj <- data.frame(cbind(
+  median=apply(post$yproj, 2, median),
+  t(apply(post$yproj, 2, quantile, probs=c(0.025, 0.975)))
+))
+
+colnames(ppc_summary_yproj) = 
+  c("Y_pred_median","Y_pred_cred_0.025","Y_pred_cred_0.975")
+
+ppc_summary_yproj$model <- "yproj"
+
+ppc_summary <- rbind(ppc_summary_yrep,ppc_summary_yproj)
+
+c2 = data.frame(rstan::extract(stan_fit,par = "c_2"))
+a = data.frame(rstan::extract(stan_fit,par = "a"))
+g1 = mcmc_combo(c2)
+g2 = mcmc_intervals(a)
+
+```
+
+
+## Model predictions
+
+
+```{r pressure, echo=FALSE,fig.width=10,fig.height=10}
+
+ppc_intervals_grouped(y=c(db_level_1$cumcases,ppc_summary_yproj$Y_pred_median),
+                                      yrep=cbind(post$yrep,post$yproj),
+                                      x=c(db_level_1$day,yproj$day),
+                                      group=c(as.character(db_level_1$Country.Region),as.character(yproj$Country.Region)))+
+   ggplot2::geom_vline(xintercept=83,linetype="dashed")
+
+
+```
+

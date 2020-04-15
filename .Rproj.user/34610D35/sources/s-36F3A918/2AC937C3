@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1586965342066.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "158834973",
+    "id" : "2AC937C3",
+    "lastKnownWriteTime" : 1586965707,
+    "last_content_update" : 1586965707592,
+    "path" : "C:/Users/jeanbaptiste.astruz/OneDrive - ADDACTIS GROUP/Travail/R/PlotPandemic/test/index.Rmd",
+    "project_path" : "index.Rmd",
+    "properties" : {
+        "cursorPosition" : "27,27",
+        "scrollLine" : "12"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 2,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_markdown"
+}

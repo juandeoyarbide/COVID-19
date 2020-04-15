@@ -1,0 +1,406 @@
+---
+title: "COVID 19 - Bayesian Modeling"
+author: "Juan Ignacio de Oyarbide & Jean Baptiste Astruz"
+date: "06/04/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+source("Utilities.R")
+
+plotListInit <- function(A) {
+  lapply(seq_len(A), function(x) {
+    
+    fig <- plot_ly(tmpdb_1[tmpdb_1$Country.Region == Country[x],], x = ~day, color = ~I("rgba(7, 164, 181, 1)"), name = Country[x]) 
+    fig <- fig %>% add_markers(y = ~ConfirmedCases, text = rownames(tmpdb_1[tmpdb_1$Country.Region == Country[x],]), showlegend = FALSE)
+    fig <- fig %>% add_text(x = 40, y = 1.1*max(1,1*tmpdb_1[tmpdb_1$Country.Region == Country[x],]$ConfirmedCases), text = ~unique(Country[x]), color = I("black"))
+    fig <- fig %>% layout(showlegend = FALSE, title = "DataViz For Gross Data (Confirmed Cases)", xaxis = list(showgrid = FALSE), yaxis = list(showgrid = FALSE))
+  }
+)}
+
+plotList <- function(A) {
+  lapply(seq_len(A), function(x) {
+    
+    fig <- plot_ly(plotdata[plotdata$Country.Region == Country[x],], x = ~day, color = ~I("black"), name = Country[x]) 
+    fig <- fig %>% add_markers(y = ~ConfirmedCases, text = rownames(plotdata[plotdata$Country.Region == Country[x],]), showlegend = FALSE)
+    fig <- fig %>% add_text(x = 40, y = max(plotdata[plotdata$Country.Region == Country[x],]$Y_pred_cred_0.975), text = ~unique(Country[x]), color = I("black"))
+    fig <- fig %>% add_lines(y = ~Y_pred_median,
+                             line = list(color = 'rgba(7, 164, 181, 1)'))
+    fig <- fig %>% add_ribbons(data = plotdata[plotdata$Country.Region == Country[x],],
+                               ymin = ~Y_pred_cred_0.025,
+                               ymax = ~Y_pred_cred_0.975,
+                               line = list(color = 'rgba(7, 164, 181, 0.05)'),
+                               fillcolor = 'rgba(7, 164, 181, 0.2)')
+    
+    fig <- fig %>% layout(showlegend = FALSE, title = "Estimation of the evolution of the Sars-Cov-2", xaxis = list(showgrid = FALSE), yaxis = list(showgrid = FALSE))
+  }
+)}
+
+options(shiny.maxRequestSize=40*1024^2) 
+
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+Sys.setenv(LOCAL_CPPFLAGS = '-march=corei7')
+```
+
+## Introduction
+
+Governments have been taking strict measures to slowdown the COVID-19 pandemic or to “flatten the curve”. The main reason is funded on avoiding a shortfall of health care resources and buy time to fight the disease. In the other hand, lockdowns are provoking collateral problems, especially in fragile economies, and administrations have already started to discuss when these measures will be ended. The question is, when will we witness the results of the previous (some of them, late) decisions? Or, how good are these decisions in order to slowdown the spread?
+In this article, we propose a probabilistic framework to predict confirmed cases given the measures taken by Governments and relevant indicators such as the rate of testing, density of the population and lockdown delay after the first case arrival. The methodology relies on Bayesian inference, which provides a mathematical architecture to partially-pool national estimates towards the overall common behavior of the pandemic (“borrowing strength” property). It is based on parameters of interests such as outbreak delay, explosion rate and reaching point. It is noteworthy that, given the different dates of arrival of the virus to national territories and the similarities among groups of countries, it is possible to provide reasonable estimates while controlling for significant structural differences among populations.
+
+## Data import
+
+
+```{r observation plots, echo=FALSE, fig.width= 9, fig.height=8}
+
+case_counts <- read.csv("time_series_covid19_confirmed_global_narrow.csv")
+
+case_counts$Date = as.Date(case_counts$Date)
+case_counts$Country.Region = as.character(case_counts$Country.Region)
+
+country_demographics <- read_csv("countryinfo.csv")
+agglomeration.index <- read_csv("agglomeration.index.csv")
+numbertests <- read_csv("covid-19-tests-country.csv")
+
+case_counts[case_counts$Country.Region=="Korea, South",c("Country.Region")] <- "South Korea"
+case_counts[case_counts$Country.Region=="Korea, South",c("Country.Region")] <- "South Korea"
+
+case_counts$day <- as.numeric(as.Date(case_counts$Date))-min(as.numeric(as.Date(case_counts$Date)))+1
+
+tmpdb_1 <- case_counts %>% 
+  group_by(Country.Region,Date,day) %>% 
+  summarize(ConfirmedCases=sum(Value)) %>% 
+  filter(Country.Region %in% c("China","US","Canada","Mexico","Chile","Uruguay","Brazil","Argentina","Russia","Vietnam",
+                               "France","Italy","Spain","Belgium","Germany","Luxembourg","Austria","United Kingdom","Portugal",
+                               "India","South Korea","Taiwan*"))
+
+tmpdb_1$Country.Region <- as.factor(tmpdb_1$Country.Region)
+
+datatable(tmpdb_1, class = 'cell-border stripe')
+Country = levels(tmpdb_1$Country.Region)
+NbCountryInit = length(levels(as.factor(tmpdb_1$Country.Region)))
+
+fig = plotListInit(NbCountryInit)
+fig %>% subplot(nrows = 3)
+
+case_counts$ConfirmedCases = as.numeric(case_counts$Value)
+
+```
+
+```{r data prep, echo=FALSE}
+
+countryinfo <- left_join(case_counts %>% 
+  group_by(Country.Region,Date) %>% 
+  filter(ConfirmedCases!=0) %>% 
+  group_by(Country.Region) %>% 
+  summarize(firstDate=min(Date),
+            firstDay=min(day)),
+  country_demographics)
+
+countryinfo$lockdown <- as.Date(max(case_counts$Date))
+
+countryinfo[countryinfo$Country.Region=="Italy",c("lockdown")] <- as.Date("2020/03/09")
+countryinfo[countryinfo$Country.Region=="Spain",c("lockdown")] <- as.Date("2020/03/14")
+countryinfo[countryinfo$Country.Region=="France",c("lockdown")] <- as.Date("2020/03/17")
+countryinfo[countryinfo$Country.Region=="Germany",c("lockdown")] <- as.Date("2020/03/22")
+countryinfo[countryinfo$Country.Region=="United Kingdom",c("lockdown")] <- as.Date("2020/03/23")
+countryinfo[countryinfo$Country.Region=="Austria",c("lockdown")] <- as.Date("2020/03/16")
+countryinfo[countryinfo$Country.Region=="Belgium",c("lockdown")] <- as.Date("2020/03/18")
+countryinfo[countryinfo$Country.Region=="Portugal",c("lockdown")] <- as.Date("2020/03/19")
+countryinfo[countryinfo$Country.Region=="China",c("lockdown")] <-as.Date("2020/01/23")
+countryinfo[countryinfo$Country.Region=="US",c("lockdown")] <- as.Date("2020/03/22")
+countryinfo[countryinfo$Country.Region=="India",c("lockdown")] <- as.Date("2020/03/24")
+countryinfo[countryinfo$Country.Region=="Argentina",c("lockdown")] <- as.Date("2020/03/20")
+countryinfo[countryinfo$Country.Region=="Luxembourg",c("lockdown")] <- as.Date("2020/03/19")
+countryinfo[countryinfo$Country.Region=="Canada",c("lockdown")] <- as.Date("2020/03/19")
+countryinfo[countryinfo$Country.Region=="Mexico",c("lockdown")] <- as.Date("2020/03/31")
+countryinfo[countryinfo$Country.Region=="Chile",c("lockdown")] <- as.Date("2020/03/23")
+countryinfo[countryinfo$Country.Region=="Uruguay",c("lockdown")] <- as.Date("2020/03/22")
+countryinfo[countryinfo$Country.Region=="Brazil",c("lockdown")] <- as.Date("2020/03/23")
+countryinfo[countryinfo$Country.Region=="Russia",c("lockdown")] <- as.Date("2020/03/10")
+countryinfo[countryinfo$Country.Region=="Taiwan*",c("lockdown")] <- as.Date("2020/03/3")
+countryinfo[countryinfo$Country.Region=="Vietnam",c("lockdown")] <- as.Date("2020/03/5")
+
+countryinfo$lockdown_delay <- as.numeric(countryinfo$lockdown)-as.numeric(countryinfo$firstDate)
+
+countryinfo <- left_join(countryinfo,agglomeration.index[,c(1,2,3,4,5,6)])
+countryinfo <- left_join(countryinfo,numbertests[,c(1,8)],by=c("Country.Region"="Entity"))
+
+tmpdb_1 <- case_counts %>% 
+  group_by(Country.Region,Date,day) %>% 
+  summarize(ConfirmedCases=sum(ConfirmedCases)) %>% 
+  filter(Country.Region %in% c("China","US","Canada","Mexico","Chile","Uruguay","Brazil","Argentina","Russia","Vietnam",
+                               "France","Italy","Spain","Belgium","Germany","Luxembourg","Austria","United Kingdom","Portugal",
+                               "India","South Korea","Taiwan*"))
+
+tmpdb_1$Country.Region <- as.factor(tmpdb_1$Country.Region)
+tmpdb_1$Country.Region <- relevel(tmpdb_1$Country.Region,"China")
+
+
+tmpdb_2 <- countryinfo %>% 
+  filter(Country.Region %in% c("China","US","Canada","Mexico","Chile","Uruguay","Brazil","Argentina","Russia","Vietnam",
+                               "France","Italy","Spain","Belgium","Germany","Luxembourg","Austria","United Kingdom","Portugal",
+                               "India","South Korea","Taiwan*"))
+
+tmpdb_2$Country.Region <- as.factor(tmpdb_2$Country.Region)
+tmpdb_2$Country.Region <- relevel(tmpdb_2$Country.Region,"China")
+
+tmpdb_2[tmpdb_2$Country.Region=="Chile",c("ratio")] <- 2738/35142
+tmpdb_2[tmpdb_2$Country.Region=="Luxembourg",c("ratio")] <- tmpdb_2[tmpdb_2$Country.Region=="Belgium",c("ratio")]
+tmpdb_2[tmpdb_2$Country.Region=="Portugal",c("ratio")] <- 7443/52086
+tmpdb_2[tmpdb_2$Country.Region=="South Korea",c("ratio")] <- 9976/431743
+tmpdb_2[tmpdb_2$Country.Region=="Uruguay",c("ratio")] <- 189/1538
+
+```
+
+
+
+```{r cars, include=FALSE, echo=FALSE}
+ndaysproj=5
+
+yproj <- expand.grid(Country.Region=levels(tmpdb_1$Country.Region),
+                    day=max(tmpdb_1$day+1):(max(tmpdb_1$day+1)+ndaysproj))
+
+yproj <- yproj[order(yproj$Country.Region,yproj$day),]
+
+yproj <- left_join(yproj,tmpdb_2)
+
+
+devPlot(ConfirmedCases ~ Date | Country.Region, 
+        data=tmpdb_1)
+
+
+design_matrix_1 <- model.matrix(~-1+Country.Region,tmpdb_1)[,-1];colnames(design_matrix_1);dim(design_matrix_1)
+
+design_matrix_a <- model.matrix(~-1+lockdown_delay+Density,tmpdb_2);colnames(design_matrix_a);dim(design_matrix_a)
+
+design_matrix_c_level_1 <- model.matrix(~-1+Country.Region,tmpdb_1);colnames(design_matrix_c_level_1);dim(design_matrix_c_level_1)
+
+design_matrix_c <- model.matrix(~-1+lockdown_delay+Density+ratio+Density:ratio,tmpdb_2);colnames(design_matrix_c);dim(design_matrix_c)
+
+design_matrix_proj <- model.matrix(~-1+Country.Region,yproj)[,-1];colnames(design_matrix_proj);dim(design_matrix_proj)
+
+design_matrix_c_proj <- model.matrix(~-1+Country.Region,yproj);colnames(design_matrix_c_proj);dim(design_matrix_c_proj)
+
+design_matrix_a_intercept <- model.matrix(~-1+continent,tmpdb_2);colnames(design_matrix_a_intercept);dim(design_matrix_a_intercept)
+
+tmpdb_1$ConfirmedCases <- tmpdb_1$ConfirmedCases+1
+  
+stan_list <- list("y"=tmpdb_1$ConfirmedCases,
+          "N"=length(tmpdb_1$ConfirmedCases),
+          "K"=dim(design_matrix_1)[2],
+          "K_a"=dim(design_matrix_a)[2],
+          "K_c"=dim(design_matrix_c)[2],
+          "design_matrix_1"=design_matrix_1,
+          #"design_matrix_a"=design_matrix_a,
+          "design_matrix_c_level_1"=design_matrix_c_level_1,
+          "design_matrix_c"=design_matrix_c,
+          "design_matrix_proj"=design_matrix_proj,
+          "design_matrix_c_proj"=design_matrix_c_proj,
+          "M"=length(yproj$Country.Region),
+          "day"=tmpdb_1$day,
+          "day_projected"=yproj$day)
+```
+
+```{r, echo=FALSE}
+sm <- "data {
+  int<lower=0> N;
+  int<lower=0> M;
+  int<lower=0> K_a;
+  int<lower=0> K_c;
+  vector[N] y;
+  vector[N] day;
+  vector[M] day_projected;
+  int<lower=0> K; //population effects
+  matrix[N,K] design_matrix_1;
+  matrix[N,K+1] design_matrix_c_level_1;
+//  matrix[K,K_a] design_matrix_a;
+  matrix[K+1,K_c] design_matrix_c;
+  matrix[M,K] design_matrix_proj;
+  matrix[M,K+1] design_matrix_c_proj;
+}
+parameters {
+  vector<lower=0>[K+1] a;
+  real<lower=0> a_intercept;
+  real<lower=0> sigma_a;
+  
+  vector<lower=0>[K] b;
+  real<lower=0> b_intercept;
+  real<lower=0> sigma_b;
+  
+  vector<lower=0>[K+1] c;
+  real<lower=0> c_intercept;
+  real<lower=0> sigma_c;
+  
+  // vector<lower=0>[K_a] a_2;
+  // real<lower=0> a_intercept;
+  // real<lower=0> sigma_a;
+  
+   vector<lower=0>[K_c] c_2;
+  // real<lower=0> c_intercept;
+  // real<lower=0> sigma_c;
+  
+  real<lower=0> sigma_lockdown;
+  real<lower=0> sigma_Density;
+  real<lower=0> sigma_ratio;
+  real<lower=0> sigma_Dens_ratio;
+  
+  real<lower=0> sigma;
+}
+transformed parameters{
+  vector[N] a_index=  design_matrix_c_level_1 * a;
+  vector[N] b_index = b_intercept + design_matrix_1 * b * sigma_b;
+  vector[N] c_index = design_matrix_c_level_1 * c;
+
+  vector[N] mu= a_index .* exp(- b_index .* exp(-c_index .* day));
+
+  vector[M] a_index_proj= design_matrix_c_proj * a;
+  vector[M] b_index_proj= b_intercept + design_matrix_proj * b * sigma_b;
+  vector[M] c_index_proj= design_matrix_c_proj * c;
+  
+  vector[M] mu_proj= a_index_proj .* exp(-b_index_proj .* exp(-c_index_proj .* day_projected));
+}
+model {
+//priors
+
+target+= normal_lpdf(a|a_intercept,sigma_a);
+target+= normal_lpdf(a_intercept|9,4);  //+ design_matrix_a * a_2
+target+= cauchy_lpdf(sigma_a|0,10);
+
+target+= normal_lpdf(b|0,1);
+target+= normal_lpdf(b_intercept|5,10);
+target+= cauchy_lpdf(sigma_b|0,25);
+
+target+= normal_lpdf(c|c_intercept + design_matrix_c * c_2 ,sigma_c); 
+target+= normal_lpdf(c_intercept|0.1,0.5);
+target+= cauchy_lpdf(sigma_c|0,1);
+
+target+= normal_lpdf(c_2[1]*sigma_lockdown|0,1);
+target+= normal_lpdf(c_2[2]*sigma_Density|0,1);
+target+= normal_lpdf(c_2[3]*sigma_ratio|0,1);
+target+= normal_lpdf(c_2[4]*sigma_Dens_ratio|0,1);
+
+target+= cauchy_lpdf(sigma_lockdown|0,10);
+target+= cauchy_lpdf(sigma_Density|0,30);
+target+= cauchy_lpdf(sigma_ratio|0,20);
+target+= cauchy_lpdf(sigma_Dens_ratio|0,50);
+
+target+= student_t_lpdf(sigma|5,0,1.5);
+
+target+= lognormal_lpdf(y|mu,sigma);
+}
+generated quantities{
+ real yrep[N]= lognormal_rng(mu,sigma);
+ real yproj[M]= lognormal_rng(mu_proj,sigma);
+}"
+sm1 = stan_model(model_code = sm)
+rm(sm)
+```
+
+
+
+```{r, include=FALSE, echo=FALSE}
+
+niter=1000
+nchains=3
+
+stan_fit = sampling(sm1,data = stan_list,chains = nchains,iter=niter)
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE, fig.width= 9, fig.height=8}
+post <- rstan::extract(stan_fit,pars = c("yrep","yproj"),
+                       inc_warmup=FALSE)
+
+ppc_summary_yrep <- data.frame(cbind(
+  median=apply(post$yrep, 2, median),
+  t(apply(post$yrep, 2, quantile, probs=c(0.025, 0.975)))
+))
+
+colnames(ppc_summary_yrep) = 
+  c("Y_pred_median","Y_pred_cred_0.025","Y_pred_cred_0.975")
+
+ppc_summary_yrep$model <- "yrep"
+
+ppc_summary_yproj <- data.frame(cbind(
+  median=apply(post$yproj, 2, median),
+  t(apply(post$yproj, 2, quantile, probs=c(0.025, 0.975)))
+))
+
+colnames(ppc_summary_yproj) = 
+  c("Y_pred_median","Y_pred_cred_0.025","Y_pred_cred_0.975")
+
+ppc_summary_yproj$model <- "yproj"
+
+ppc_summary <- rbind(ppc_summary_yrep,ppc_summary_yproj)
+
+plotdata <- data.frame(Country.Region=c(as.character(tmpdb_1$Country.Region),as.character(yproj$Country.Region)),
+                       day=c(tmpdb_1$day,yproj$day),
+                       ConfirmedCases=c(tmpdb_1$ConfirmedCases,rep(NA,length(yproj$day))),
+                       Y_pred_median=round(ppc_summary$Y_pred_median,0),
+                       Y_pred_cred_0.025=round(ppc_summary$Y_pred_cred_0.025,0),
+                       Y_pred_cred_0.975=round(ppc_summary$Y_pred_cred_0.975),0)
+write.csv(plotdata,file="plotdata.csv")
+
+NbCountryProj = length(levels(as.factor(plotdata$Country.Region)))
+
+fig = plotList(NbCountryProj)
+fig %>% subplot(nrows = 3)
+
+```
+
+## Model specification
+
+
+$$
+\begin{gather*}
+
+y_{jt} \sim Lognormal(\mu_{jt},\sigma_{jt})\\
+
+\mu_{jt}=a_j \text{ } exp ({-b_j \text{ } exp({-c_j\text{ } \times\text{ } t}}))\\
+
+\sigma_{jt} \sim studentT (5,0,1.5)\\
+
+a_j \sim Normal^+(a_{intercept},\sigma_a)\\
+
+b_j \sim Normal(b_{intercept},\sigma_b)\\
+
+c_j \sim Normal(c_{intercept}+ \beta_{lockdown} \times \sigma_{lockdown}+\beta_{density} \times \sigma_{density} + \beta_{tests} \times \sigma_{tests} + \beta_{Density:tests} \times \sigma_{Density:tests},\sigma_c)\\
+
+a_{intercept} \sim Gamma(3,0.5)\\
+
+b_{intercept} \sim Normal^+(5,10)\\
+
+c_{intercept} \sim Normal^+(0.1,0.5)\\
+
+\sigma_a \sim Cauchy^+(0,10)\\
+
+\sigma_b \sim Cauchy^+(0,25)\\
+
+\sigma_c \sim Cauchy^+(0,1)\\
+
+\beta_{lockdown}\sim Normal(0,\sigma_{lockdown})\\
+
+\beta_{density}\sim Normal(0,\sigma_{density})\\
+
+\beta_{tests}\sim Normal(0,\sigma_{tests})\\
+
+\beta_{Density:tests}\sim Normal(0,\sigma_{Density:tests})\\
+
+\sigma_{lockdown}\sim Cauchy^+(0,10)\\
+
+\sigma_{density}\sim Cauchy^+(0,30)\\
+
+\sigma_{tests}\sim Cauchy^+(0,20)\\
+
+\sigma_{Density:tests})\sim Cauchy^+(0,50)\\
+
+\end{gather*}
+$$
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

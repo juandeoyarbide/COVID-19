@@ -1,0 +1,27 @@
+#setwd("C:\\Users\\jeanbaptiste.astruz\\OneDrive - ADDACTIS GROUP\\Travail\\R\\PlotPandemic")
+
+plotdata = read.csv("plotdata.csv")
+Country = levels(plotdata$Country.Region)
+
+library(plotly)
+library(broom)
+
+plotList <- function(A) {
+  lapply(seq_len(A), function(x) {
+    
+    fig <- plot_ly(plotdata[plotdata$Country.Region == Country[x],], x = ~day, color = ~I("black"), name = Country[x]) 
+    fig <- fig %>% add_markers(y = ~ConfirmedCases, text = rownames(plotdata[plotdata$Country.Region == Country[x],]), showlegend = FALSE)
+    fig <- fig %>% add_text(x = 40, y = max(plotdata[plotdata$Country.Region == Country[x],]$Y_pred_cred_0.975), text = ~unique(Country[x]), color = I("black"))
+    fig <- fig %>% add_lines(y = ~Y_pred_median,
+                             line = list(color = 'rgba(7, 164, 181, 1)'))
+    fig <- fig %>% add_ribbons(data = plotdata[plotdata$Country.Region == Country[x],],
+                               ymin = ~Y_pred_cred_0.025,
+                               ymax = ~Y_pred_cred_0.975,
+                               line = list(color = 'rgba(7, 164, 181, 0.05)'),
+                               fillcolor = 'rgba(7, 164, 181, 0.2)')
+    
+    fig <- fig %>% layout(showlegend = FALSE, title = "Estimation of the evolution of the Sars-Cov-2", xaxis = list(showgrid = FALSE), yaxis = list(showgrid = FALSE))
+  }
+)}
+fig = plotList(length(Country))
+fig %>% subplot(nrows = 3)

@@ -1,0 +1,26 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1586965462291.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "1429103289",
+    "id" : "467CC99A",
+    "lastKnownWriteTime" : 1586965692,
+    "last_content_update" : 1586965692688,
+    "path" : "C:/Users/jeanbaptiste.astruz/OneDrive - ADDACTIS GROUP/Travail/R/PlotPandemic/test/stan_code_V2.stan",
+    "project_path" : "stan_code_V2.stan",
+    "properties" : {
+        "cursorPosition" : "90,1",
+        "scrollLine" : "59",
+        "tempName" : "Untitled2"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 4,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "stan"
+}

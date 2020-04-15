@@ -1,0 +1,268 @@
+setwd("C:\\Users\\jeanbaptiste.astruz\\OneDrive - ADDACTIS GROUP\\Travail\\R\\PlotPandemic")
+
+source("Utilities.R")
+
+case_counts <- read.csv("time_series_covid19_confirmed_global_narrow.csv")
+country_demographics <- read.csv("countryinfo.csv")
+agglomeration.index <- read.csv("agglomeration.index.csv")
+numbertests <- read.csv("covid-19-tests-country.csv")
+
+case_counts$Date = as.Date(case_counts$Date)
+case_counts$Country.Region = as.character(case_counts$Country.Region)
+country_demographics$Country.Region = as.character(country_demographics$Country.Region)
+country_demographics$Country.Region = as.character(country_demographics$Country.Region)
+
+colnames(case_counts) <- c("Country.Region","Lat","Long","Date","ConfirmedCases")
+case_counts[case_counts$Country.Region=="Korea, South",]$Country.Region <- "South Korea"
+
+case_counts$day <- as.numeric(as.Date(case_counts$Date))-min(as.numeric(as.Date(case_counts$Date)))+1
+
+countryinfo <- left_join(case_counts %>% 
+  group_by(Country.Region,Date) %>% 
+  filter(ConfirmedCases!=0) %>% 
+  group_by(Country.Region) %>% 
+  summarize(firstDate=min(Date),
+            firstDay=min(day)),
+  country_demographics)
+
+countryinfo$lockdown <- as.Date(max(case_counts$Date))
+
+countryinfo[countryinfo$Country.Region=="Italy",c("lockdown")] <- as.Date("2020/03/09")
+countryinfo[countryinfo$Country.Region=="Spain",c("lockdown")] <- as.Date("2020/03/14")
+countryinfo[countryinfo$Country.Region=="France",c("lockdown")] <- as.Date("2020/03/17")
+countryinfo[countryinfo$Country.Region=="Germany",c("lockdown")] <- as.Date("2020/03/22")
+countryinfo[countryinfo$Country.Region=="United Kingdom",c("lockdown")] <- as.Date("2020/03/23")
+countryinfo[countryinfo$Country.Region=="Austria",c("lockdown")] <- as.Date("2020/03/16")
+countryinfo[countryinfo$Country.Region=="Belgium",c("lockdown")] <- as.Date("2020/03/18")
+countryinfo[countryinfo$Country.Region=="Portugal",c("lockdown")] <- as.Date("2020/03/19")
+countryinfo[countryinfo$Country.Region=="China",c("lockdown")] <-as.Date("2020/01/23")
+countryinfo[countryinfo$Country.Region=="US",c("lockdown")] <- as.Date("2020/03/22")
+countryinfo[countryinfo$Country.Region=="India",c("lockdown")] <- as.Date("2020/03/24")
+countryinfo[countryinfo$Country.Region=="Argentina",c("lockdown")] <- as.Date("2020/03/20")
+countryinfo[countryinfo$Country.Region=="Luxembourg",c("lockdown")] <- as.Date("2020/03/19")
+countryinfo[countryinfo$Country.Region=="Canada",c("lockdown")] <- as.Date("2020/03/19")
+countryinfo[countryinfo$Country.Region=="Mexico",c("lockdown")] <- as.Date("2020/03/31")
+countryinfo[countryinfo$Country.Region=="Chile",c("lockdown")] <- as.Date("2020/03/23")
+countryinfo[countryinfo$Country.Region=="Uruguay",c("lockdown")] <- as.Date("2020/03/22")
+countryinfo[countryinfo$Country.Region=="Brazil",c("lockdown")] <- as.Date("2020/03/23")
+countryinfo[countryinfo$Country.Region=="Russia",c("lockdown")] <- as.Date("2020/03/10")
+countryinfo[countryinfo$Country.Region=="Taiwan*",c("lockdown")] <- as.Date("2020/03/3")
+countryinfo[countryinfo$Country.Region=="Vietnam",c("lockdown")] <- as.Date("2020/03/5")
+
+countryinfo$lockdown_delay <- as.numeric(countryinfo$lockdown)-as.numeric(countryinfo$firstDate)
+agglomeration.index$Country.Region = as.character(agglomeration.index$Country.Region)
+numbertests$Entity = as.character(numbertests$Entity)
+
+countryinfo <- left_join(countryinfo,agglomeration.index[,c(1,2,3,4,5,6)])
+countryinfo <- left_join(countryinfo,numbertests[,c(1,8)],by=c("Country.Region"="Entity"))
+
+#tmpdb_1 <- case_counts %>% 
+#  group_by(Country.Region,Date,day) %>% 
+#  summarize(ConfirmedCases=sum(ConfirmedCases)) %>% 
+#  filter(Country.Region %in% c("China","US","Canada","Mexico","Chile","Uruguay","Brazil","Argentina","Russia","Vietnam",
+#                               "France","Italy","Spain","Belgium","Germany","Luxembourg","Austria","United Kingdom","Portugal",
+#                               "India","South Korea","Taiwan*"))
+
+tmpdb_1 <- case_counts %>% 
+  group_by(Country.Region,Date,day) %>% 
+  summarize(ConfirmedCases=sum(ConfirmedCases)) %>% 
+  filter(Country.Region %in% c("China","US","Canada","Mexico","Chile","Uruguay","Brazil","Argentina","Russia","Vietnam",
+                               "France","Italy","Spain","Belgium","Germany","Luxembourg","Austria","United Kingdom","Portugal",
+                               "India","South Korea","Taiwan*"))
+
+tmpdb_1$Country.Region <- as.factor(tmpdb_1$Country.Region)
+#tmpdb_1$Country.Region <- relevel(tmpdb_1$Country.Region,"China")
+
+
+tmpdb_2 <- countryinfo %>% 
+  filter(Country.Region %in% c("China","US","Canada","Mexico","Chile","Uruguay","Brazil","Argentina","Russia","Vietnam",
+                               "France","Italy","Spain","Belgium","Germany","Luxembourg","Austria","United Kingdom","Portugal",
+                               "India","South Korea","Taiwan*"))
+
+tmpdb_2$Country.Region <- as.factor(tmpdb_2$Country.Region)
+#tmpdb_2$Country.Region <- relevel(tmpdb_2$Country.Region,"China")
+
+#tmpdb_2[tmpdb_2$Country.Region=="Chile",c("ratio")] <- 2738/35142
+#tmpdb_2[tmpdb_2$Country.Region=="Luxembourg",c("ratio")] <- tmpdb_2[tmpdb_2$Country.Region=="Belgium",c("ratio")]
+#tmpdb_2[tmpdb_2$Country.Region=="Portugal",c("ratio")] <- 7443/52086
+#tmpdb_2[tmpdb_2$Country.Region=="South Korea",c("ratio")] <- 9976/431743
+#tmpdb_2[tmpdb_2$Country.Region=="Uruguay",c("ratio")] <- 189/1538
+
+View(tmpdb_1)
+View(tmpdb_2)
+
+ndaysproj=5
+
+yproj <- expand.grid(Country.Region=levels(tmpdb_1$Country.Region),
+                    day=max(tmpdb_1$day+1):(max(tmpdb_1$day+1)+ndaysproj))
+
+yproj <- yproj[order(yproj$Country.Region,yproj$day),]
+
+yproj <- left_join(yproj,tmpdb_2)
+
+
+devPlot(ConfirmedCases ~ Date | Country.Region, 
+        data=tmpdb_1)
+
+
+design_matrix_1 <- model.matrix(~-1+Country.Region,tmpdb_1)[,-1];colnames(design_matrix_1);dim(design_matrix_1)
+
+design_matrix_a <- model.matrix(~-1+lockdown_delay+Density,tmpdb_2);colnames(design_matrix_a);dim(design_matrix_a)
+
+design_matrix_c_level_1 <- model.matrix(~-1+Country.Region,tmpdb_1);colnames(design_matrix_c_level_1);dim(design_matrix_c_level_1)
+
+design_matrix_c <- model.matrix(~-1+lockdown_delay+Density+ratio+Density:ratio,tmpdb_2);colnames(design_matrix_c);dim(design_matrix_c)
+
+design_matrix_proj <- model.matrix(~-1+Country.Region,yproj)[,-1];colnames(design_matrix_proj);dim(design_matrix_proj)
+
+design_matrix_c_proj <- model.matrix(~-1+Country.Region,yproj);colnames(design_matrix_c_proj);dim(design_matrix_c_proj)
+
+design_matrix_a_intercept <- model.matrix(~-1+continent,tmpdb_2);colnames(design_matrix_a_intercept);dim(design_matrix_a_intercept)
+
+tmpdb_1$ConfirmedCases <- tmpdb_1$ConfirmedCases+1
+  
+stan_list <- list("y"=tmpdb_1$ConfirmedCases,
+          "N"=length(tmpdb_1$ConfirmedCases),
+          "K"=dim(design_matrix_1)[2],
+          "K_a"=dim(design_matrix_a)[2],
+          "K_c"=dim(design_matrix_c)[2],
+          "design_matrix_1"=design_matrix_1,
+          #"design_matrix_a"=design_matrix_a,
+          "design_matrix_c_level_1"=design_matrix_c_level_1,
+          "design_matrix_c"=design_matrix_c,
+          "design_matrix_proj"=design_matrix_proj,
+          "design_matrix_c_proj"=design_matrix_c_proj,
+          "M"=length(yproj$Country.Region),
+          "day"=tmpdb_1$day,
+          "day_projected"=yproj$day)
+
+
+stan_fit<- stan(
+  file="stan_model.stan",
+  data=stan_list,
+  control = list(adapt_delta=0.9, max_treedepth=15),
+  chains=3,
+  iter =1000,
+  warmup = 500
+)
+
+plot(stan_fit,pars=c("c_2"))
+
+plot(stan_fit,pars=c("sigma_lockdown","sigma_Density","sigma_ratio","sigma_Dens_ratio"))
+
+pairs(stan_fit,pars=c("A","c"))
+
+post <- rstan::extract(stan_fit,pars = c("yrep","yproj"),
+                       inc_warmup=FALSE)
+
+ppc_summary_yrep <- data.frame(cbind(
+  median=apply(post$yrep, 2, median),
+  t(apply(post$yrep, 2, quantile, probs=c(0.025, 0.975)))
+))
+
+colnames(ppc_summary_yrep) = 
+  c("Y_pred_median","Y_pred_cred_0.025","Y_pred_cred_0.975")
+
+ppc_summary_yrep$model <- "yrep"
+
+ppc_summary_yproj <- data.frame(cbind(
+  median=apply(post$yproj, 2, median),
+  t(apply(post$yproj, 2, quantile, probs=c(0.025, 0.975)))
+))
+
+colnames(ppc_summary_yproj) = 
+  c("Y_pred_median","Y_pred_cred_0.025","Y_pred_cred_0.975")
+
+ppc_summary_yproj$model <- "yproj"
+
+ppc_summary <- rbind(ppc_summary_yrep,ppc_summary_yproj)
+
+plotdata <- data.frame(Country.Region=c(as.character(tmpdb_1$Country.Region),as.character(yproj$Country.Region)),
+                       day=c(tmpdb_1$day,yproj$day),
+                       ConfirmedCases=c(tmpdb_1$ConfirmedCases,rep(NA,length(yproj$day))),
+                       Y_pred_median=round(ppc_summary$Y_pred_median,0),
+                       Y_pred_cred_0.025=round(ppc_summary$Y_pred_cred_0.025,0),
+                       Y_pred_cred_0.975=round(ppc_summary$Y_pred_cred_0.975),0)
+write.csv(plotdata,file="plotdata.csv")
+
+View(plotdata)
+
+
+
+
+
+result <- data.frame(Country.Region=yproj$Country.Region,
+                     day=yproj$day,
+                     median=proj_median_proj)
+
+colnames(plotdata)
+
+# plotDevBananas(Y_pred_cred_0.025 + Y_pred_cred_0.975 + Y_pred_mean + 
+#                  ConfirmedCases ~ day,
+#                data=plotdata)
+
+ggplot(data = plotdata) + 
+  geom_point(aes(day, ConfirmedCases)) + 
+  geom_line(aes(day, Y_pred_median, color = Country.Region),size=1) + 
+  geom_ribbon(aes(day, ymin = Y_pred_cred_0.025, ymax = Y_pred_cred_0.975, fill = Country.Region),alpha = 0.25)+
+  theme_Publication()+
+  facet_wrap(. ~ Country.Region, nrow=3)+
+  ggplot2::geom_vline(xintercept=64,linetype="dashed")
+
+
+  transition_time(day)+
+  labs(title = "Day: {closest_state}", x="Day", y="Confirmed Cases") +
+  ease_aes('cubic-in-out')+ 
+  guides(colour = guide_legend(override.aes = list(size=5)))
+
+p_CPS_1 <- animate(p_CPS_1,nframes=100,fps=10,width = 1200, height = 800, duration=16, renderer = gifski_renderer()) 
+
+anim_save(path.expand(paste(path,"\\p_CPS_1_anim.gif",sep="")),animation=p_1_anim)
+
+plot_list<-list()
+
+plot_list[[1]]<-traceplot(stan_fit,pars=c("a_intercept","b_intercept","c_intercept",
+                                          "sigma","sigma_a","sigma_b","sigma_c","a"),
+                          inc_warmup = FALSE)
+
+plot_list[[2]]<-pp_check(case_counts$ConfirmedCases, post$yrep[1:100,], ppc_dens_overlay)
+plot_list[[3]]<-ppc_intervals(case_counts$ConfirmedCases, post$yrep,x=day)
+plot_list[[4]]<-ppc_intervals_grouped(y=c(tmpdb_1$ConfirmedCases,ppc_summary_yproj$Y_pred_median),
+                                      yrep=cbind(post$yrep,post$yproj),
+                                      x=c(tmpdb_1$day,yproj$day),
+                                      group=c(as.character(tmpdb_1$Country.Region),as.character(yproj$Country.Region)))+
+   ggplot2::geom_vline(xintercept=71,linetype="dashed")
+
+ppc_intervals_grouped(y=tmpdb_1$ConfirmedCases,
+                      yrep=post$yrep,
+                      x=tmpdb_1$day,
+                      group=tmpdb_1$Country.Region)+
+  geom_line(data = plotdata,aes(day, Y_pred_median, color = Country.Region),size=1)+
+  facet_wrap(. ~ Country.Region, nrow=4)
+
+
+  ggplot2::geom_ribbon(data = plotdata,aes(day, ymin = Y_pred_cred_0.025, ymax = Y_pred_cred_0.975, fill = Country.Region),alpha = 0.25)
+
+plot_list[[5]]<-ppc_intervals_grouped(case_counts$y, post$yrep,group=case_counts$service_subcategory_2)
+
+########### by state #########
+plot_list[[6]]<-pp_check(case_counts$y, post$yrep, fun = "stat_grouped", group = case_counts$state, stat = "median")
+plot_list[[7]]<-pp_check(case_counts$y, post$yrep, fun = "stat_grouped", group = case_counts$state, stat = "max")
+plot_list[[8]]<-pp_check(case_counts$y, post$yrep, fun = "stat_grouped", group = case_counts$state, stat = "min")
+plot_list[[9]]<-pp_check(case_counts$y, post$yrep, fun = "stat_grouped", group = case_counts$state, stat = "mean")
+plot_list[[10]]<-pp_check(case_counts$y, post$yrep, fun = "stat_grouped", group = case_counts$state, stat = "sd")
+
+pdf("plots18.03_surgical_hier.pdf", onefile = TRUE,width = 14,height = 10)
+for (i in 1:10) {
+  print(plot_list[[i]])  
+}
+dev.off()
+
+
+t=0:50
+
+100000*exp(-5*exp(-0.1*t))
+
+log(50000)
+mean(exp(rnorm(100000,0.65,5)))
+

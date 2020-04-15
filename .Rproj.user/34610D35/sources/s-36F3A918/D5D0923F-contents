@@ -1,0 +1,224 @@
+---
+title: "COVID 19 - Bayesian Modeling"
+author: "Juan Ignacio de Oyarbide & Jean Baptiste Astruz"
+date: "06/04/2020"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    logo: Addactis2_small.png
+    source_code: embed
+    theme: bootstrap
+    vertical_layout: scroll
+---
+
+```{r setup, include=FALSE}
+library(highcharter)
+library(dplyr)
+library(viridisLite)
+library(forecast)
+library(treemap)
+library(flexdashboard)
+
+knitr::opts_chunk$set(echo = FALSE)
+source("Utilities.R")
+load("C:/Users/jeanbaptiste.astruz/OneDrive - ADDACTIS GROUP/Travail/R/PlotPandemic/run_Result_R.RData")
+
+thm <- 
+  hc_theme(
+    colors = c("#1a6ecc", "#434348", "#90ed7d"),
+    chart = list(
+      backgroundColor = "transparent",
+      style = list(fontFamily = "Source Sans Pro")
+    ),
+    xAxis = list(
+      gridLineWidth = 1
+    )
+  )
+
+```
+
+Problem Definition
+=======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Introduction
+
+Governments have been taking strict measures to slowdown the COVID-19 pandemic or to “flatten the curve”. The main reason is funded on avoiding a shortfall of health care resources and buy time to fight the disease. In the other hand, lockdowns are provoking collateral problems, especially in fragile economies, and administrations have already started to discuss when these measures will be ended. The question is, when will we witness the results of the previous (some of them, late) decisions? Or, how good are these decisions in order to slowdown the spread?
+In this article, we propose a probabilistic framework to predict confirmed cases given the measures taken by Governments and relevant indicators such as the rate of testing, density of the population and lockdown delay after the first case arrival. The methodology relies on Bayesian inference, which provides a mathematical architecture to partially-pool national estimates towards the overall common behavior of the pandemic (“borrowing strength” property). It is based on parameters of interests such as outbreak delay, explosion rate and reaching point. It is noteworthy that, given the different dates of arrival of the virus to national territories and the similarities among groups of countries, it is possible to provide reasonable estimates while controlling for significant structural differences among populations.
+
+Row
+-----------------------------------------------------------------------
+
+Data Preparation and Vizualisation
+=======================================================================
+### Data import
+
+```{r observation plots, echo=FALSE, fig.width= 9, fig.height=8}
+
+datatable(tmpdb_1, class = 'cell-border stripe')
+Country = levels(tmpdb_1$Country.Region)
+NbCountryInit = length(levels(as.factor(tmpdb_1$Country.Region)))
+
+fig = plotListInit(NbCountryInit)
+fig %>% subplot(nrows = 3)
+
+```
+
+Estimation/Results
+=======================================================================
+Row
+-----------------------------------------------------------------------
+
+### Projected Estimation
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE, fig.width= 9, fig.height=8, warning = FALSE}
+
+fig = plotList(NbCountryProj)
+fig %>% subplot(nrows = 3)
+
+```
+
+Model Definition
+=======================================================================
+Row
+-----------------------------------------------------------------------
+
+### Model specification
+
+$$
+\begin{gather*}
+
+y_{jt} \sim Lognormal(\mu_{jt},\sigma_{jt})\\
+
+\mu_{jt}=a_j \text{ } exp ({-b_j \text{ } exp({-c_j\text{ } \times\text{ } t}}))\\
+
+\sigma_{jt} \sim studentT (5,0,1.5)\\
+
+a_j \sim Normal^+(a_{intercept},\sigma_a)\\
+
+b_j \sim Normal(b_{intercept},\sigma_b)\\
+
+c_j \sim Normal(c_{intercept}+ \beta_{lockdown} \times \sigma_{lockdown}+\beta_{density} \times \sigma_{density} + \beta_{tests} \times \sigma_{tests} + \beta_{Density:tests} \times \sigma_{Density:tests},\sigma_c)\\
+
+a_{intercept} \sim Gamma(3,0.5)\\
+
+b_{intercept} \sim Normal^+(5,10)\\
+
+c_{intercept} \sim Normal^+(0.1,0.5)\\
+
+\sigma_a \sim Cauchy^+(0,10)\\
+
+\sigma_b \sim Cauchy^+(0,25)\\
+
+\sigma_c \sim Cauchy^+(0,1)\\
+
+\beta_{lockdown}\sim Normal(0,\sigma_{lockdown})\\
+
+\beta_{density}\sim Normal(0,\sigma_{density})\\
+
+\beta_{tests}\sim Normal(0,\sigma_{tests})\\
+
+\beta_{Density:tests}\sim Normal(0,\sigma_{Density:tests})\\
+
+\sigma_{lockdown}\sim Cauchy^+(0,10)\\
+
+\sigma_{density}\sim Cauchy^+(0,30)\\
+
+\sigma_{tests}\sim Cauchy^+(0,20)\\
+
+\sigma_{Density:tests})\sim Cauchy^+(0,50)\\
+
+\end{gather*}
+$$
+
+draft {data-orientation=columns}
+=======================================================================
+
+Column {data-width=600}
+-----------------------------------------------------------------------
+
+### Sales Forecast
+
+```{r, echo = FALSE}
+AirPassengers %>% 
+  forecast(level = 90) %>% 
+  hchart() %>% 
+  hc_add_theme(thm)
+```
+
+### Sales by State
+
+```{r, echo = FALSE}
+data("USArrests", package = "datasets")
+data("usgeojson")
+
+USArrests <- USArrests %>%
+  mutate(state = rownames(.))
+
+n <- 4
+colstops <- data.frame(
+  q = 0:n/n,
+  c = substring(viridis(n + 1), 0, 7)) %>%
+  list_parse2()
+
+highchart() %>%
+  hc_add_series_map(usgeojson, USArrests, name = "Sales",
+                    value = "Murder", joinBy = c("woename", "state"),
+                    dataLabels = list(enabled = TRUE,
+                                      format = '{point.properties.postalcode}')) %>%
+  hc_colorAxis(stops = colstops) %>%
+  hc_legend(valueDecimals = 0, valueSuffix = "%") %>%
+  hc_mapNavigation(enabled = TRUE) %>%
+  hc_add_theme(thm)
+```
+
+Column {.tabset data-width=400}
+-----------------------------------------------------------------------
+
+### Sales by Category
+
+```{r, fig.keep='none', echo = FALSE}
+data("Groceries", package = "arules")
+dfitems <- tbl_df(Groceries@itemInfo)
+
+set.seed(10)
+
+dfitemsg <- dfitems %>%
+  mutate(category = gsub(" ", "-", level1),
+         subcategory = gsub(" ", "-", level2)) %>%
+  group_by(category, subcategory) %>% 
+  summarise(sales = n() ^ 3 ) %>% 
+  ungroup() %>% 
+  sample_n(31)
+
+tm <- treemap(dfitemsg, index = c("category", "subcategory"),
+              vSize = "sales", vColor = "sales",
+              type = "value", palette = rev(viridis(6)))
+
+highchart() %>% 
+  hc_add_series_treemap(tm, allowDrillToNode = TRUE,
+                        layoutAlgorithm = "squarified") %>% 
+  hc_add_theme(thm)
+```
+
+### Best Sellers
+
+```{r, echo = FALSE}
+set.seed(2)
+
+nprods <- 10
+
+dfitems %>% 
+  sample_n(nprods) %>% 
+  .$labels %>% 
+  rep(times = sort(sample( 1e4:2e4, size = nprods), decreasing = TRUE)) %>% 
+  factor(levels = unique(.)) %>% 
+  hchart(showInLegend = FALSE, name = "Sales", pointWidth = 10) %>% 
+  hc_add_theme(thm) %>% 
+  hc_chart(type = "bar")
+  
+```
